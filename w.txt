@@ -1,0 +1,45 @@
+ lib/getVideos.ts — replace the fetch layer
+What’s wrong today: Hardcoded URL, ignores parameters, returns only VideoRes[] (not VideoResponse), no res.ok check, width is set to video.id, and tags is missing for your VideoRes type.
+
+What to add/change: One exported function getVideosByQuery that builds the URL from query, page, per_page, validates the response, maps each video (including tags), and returns { page, per_page, videos }.
+
+"use server";
+import { VideoResponse, VideoRes } from "@/types/backend/types";
+const API_KEY = process.env.API_KEY;
+export const getVideosByQuery = async (
+  query: string,
+  pages: number,
+  per_page: number = 5,
+): Promise<VideoResponse> => {
+  if (!API_KEY || API_KEY === "") {
+    throw new Error("Missing API KEY");
+  }
+  const res = await fetch(
+    `https://api.pexels.com/v1/videos/search?query=${encodeURIComponent(query)}&page=${pages}&per_page=${per_page}`,
+    { headers: { Authorization: API_KEY } },
+  );
+  if (!res.ok) {
+    throw new Error("Failed to fetch videos");
+  }
+  const data = await res.json();
+  const videos: VideoRes[] = data.videos.map((video: any) => ({
+    id: video.id,
+    width: video.width,
+    height: video.height,
+    url: video.video_files[0].link,
+    duration: video.duration ? video.duration : 0,
+    size: video.size,
+    tags: video.tags || [],
+    user: {
+      id: video.user?.id,
+      name: video.user?.name,
+      url: video.user?.url,
+    },
+  }));
+  return {
+    page: data.page,
+    per_page: data.per_page,
+    videos,
+  };
+};
+Why for Workshop 1: Students see real API parameters, error handling, typing end-to-end, and a shape (VideoResponse) the page and feed can share. encodeURIComponent avoids broken URLs if the query has spaces.
