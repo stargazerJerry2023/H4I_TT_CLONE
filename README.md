@@ -1,480 +1,47 @@
-# TikTok Clone Workshop Template
+# Workshop: `component/Video.tsx` → completed TikTok-style feed
 
-Workshop notes for moving from the **starter** feed (`component/Video.tsx`) to the **completed** feed (same logic as root `Video.tsx`).
+This guide starts from **your current** `component/Video.tsx` (hoisted `VideoFrame`, `VideoFeed` with `return null`) and walks step-by-step to match the **completed** behavior in root `Video.tsx` (mute UI, vertical snap feed, `IntersectionObserver`, client pagination).
 
-## Where the “completed” code lives
+**Reference:** Full solution lives in **`Video.tsx`** at the repo root. After each step, you can diff against that file.
 
-- **Reference copy:** `Video.tsx` in the **project root** (full solution for comparison).
-- **What students should ship:** Copy that solution into **`component/Video.tsx`** so imports stay `import … from "@/component/Video"`. You can delete or ignore the root `Video.tsx` after merging to avoid two sources of truth.
-
-## Fix `app/page.tsx` after the merge
-
-The completed module **default-exports `VideoFeed`**, not `VideoFrame`.
-
-### `app/page.tsx` — **Before** (starter)
-
-```tsx
-"use server";
-
-import VideoFrame from "@/component/Video";
-import { getVideosByQuery } from "@/lib/getVideos";
-import { VideoResponse } from "@/types/backend/types";
-
-export default async function Home() {
-  const data = await getVideosByQuery("space", 1, 5);
-
-  return (
-    <div className="h-screen w-screen flex justify-center items-center">
-      <div className="flex h-[90%] w-[40%] bg-black flex justify-center items-center rounded-2xl">
-        <VideoFrame videoRes={data} />
-      </div>
-    </div>
-  );
-}
-```
-
-### `app/page.tsx` — **After** (matches completed `VideoFeed` export)
-
-```tsx
-"use server";
-
-import VideoFeed from "@/component/Video";
-import { getVideosByQuery } from "@/lib/getVideos";
-
-export default async function Home() {
-  const data = await getVideosByQuery("space", 1, 5);
-
-  return (
-    <div className="h-screen w-screen flex justify-center items-center">
-      <div className="flex h-[90%] w-[40%] bg-black flex justify-center items-center rounded-2xl">
-        <VideoFeed videoRes={data} />
-      </div>
-    </div>
-  );
-}
-```
-
-**What changed:** `VideoFrame` → **`VideoFeed`**, drop unused `VideoResponse` import if you are not using it in this file.
+**Align with `app/page.tsx`:** Your home page uses **`getVideosByQuery("space", 1, 5)`**. Use **`"space"`** in the client pagination step too (the root reference file uses `"nature"` — pick one string in both places).
 
 ---
 
-## `component/Video.tsx` — **Before** (starter, full file)
+## What you have today (baseline)
 
-This is the workshop starter: nested `VideoFrame`, shared parent `videoRef`, and **no** list / observer / pagination.
-
-```tsx
-"use client";
-import { VideoResponse, VideoRes } from "@/types/backend/types";
-import { useCallback, useEffect, useRef, useState } from "react";
-export interface VideoProps {
-  videoURL: string;
-  isMuted: boolean;
-  toggleMute: () => void;
-  isActive: boolean;
-}
-
-export default function VideoFeed({ videoRes }: { videoRes: VideoResponse }) {
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [videos, setVideos] = useState<VideoRes[]>(videoRes.videos);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isMuted, setIsMuted] = useState(true);
-  const [page, setPage] = useState(2);
-  const [isActive, setIsActive] = useState(false);
-  const [isPaused, setPaused] = useState<{
-    type: boolean;
-    id: number;
-  } | null>(null);
-
-  const togglePlay = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      setPaused({ type: false, id: Date.now() });
-      videoRef.current.play().catch((err) => {
-        console.error("Play failed:", err);
-      });
-    } else {
-      setPaused({ type: true, id: Date.now() });
-      videoRef.current.pause();
-    }
-    setTimeout(() => setPaused(null), 600);
-  };
-
-  const VideoFrame = ({ videoProps }: { videoProps: VideoProps }) => {
-    const { videoURL, isMuted, toggleMute, isActive } = videoProps;
-
-    useEffect(() => {
-      if (!videoRef.current) return;
-      if (isActive) {
-        videoRef.current.currentTime = 0;
-        videoRef.current.play().catch((err) => {
-          console.error("Autoplay prevented by browser:", err);
-        });
-      } else {
-        videoRef.current.pause();
-      }
-    }, [isActive, videoURL]);
-
-    return (
-      <>
-        <div className="h-full w-full overflow-hidden relative flex justify-center items-center">
-          <video
-            ref={videoRef}
-            src={videoURL}
-            loop
-            muted={isMuted}
-            playsInline
-            className="absolute inset-0 h-full w-full object-cover z-0 rounded-2xl"
-          />
-          <div
-            className="absolute inset-0 z-10 w-full h-full flex justify-center items-center"
-            onClick={togglePlay}
-          >
-            {isPaused && (
-              <img
-                key={isPaused.id}
-                src={isPaused.type ? "/pause.png" : "/play.png"}
-                className="w-[60px] h-[60px] animate-float-up pointer-events-none"
-                alt={isPaused.type ? "Pause" : "Play"}
-              />
-            )}
-          </div>
-        </div>
-      </>
-    );
-  };
-}
-```
+- `VideoFrame`: ref, pause overlay, `useEffect` for `isActive`, tap-to-play — **no** mute/creator layer.
+- `VideoFeed`: seeds `videos`, `currentIndex`, `isMuted`, `page`, plus unused `isActive` state — **`return null`** so nothing renders yet.
+- **No** `getVideosByQuery` import, **no** observer, **no** scroll container or `map`.
 
 ---
 
-## `component/Video.tsx` — **After** (completed implementation)
+## Step 1 — Import `getVideosByQuery`
 
-Copy this into **`component/Video.tsx`** (same content as root `Video.tsx`). Align **`getVideosByQuery("…", page, 5)`** with the query you use in **`page.tsx`** (e.g. `"space"` everywhere).
+**Why:** The feed will fetch page 2, 3, … from the client when the user scrolls near the end (same server function as `page.tsx`, invoked from the browser via your `"use server"` module).
+
+**Add** at the top of `component/Video.tsx` (with your other imports):
 
 ```tsx
-"use client";
 import { getVideosByQuery } from "@/lib/getVideos";
+```
+
+**Optional:** Reorder type imports to match the completed file:
+
+```tsx
 import { VideoRes, VideoResponse } from "@/types/backend/types";
-import { useCallback, useEffect, useRef, useState } from "react";
-
-export interface VideoProps {
-  videoURL: string;
-  isMuted: boolean;
-  toggleMute: () => void;
-  isActive: boolean;
-}
-
-const VideoFrame = ({ videoProps }: { videoProps: VideoProps }) => {
-  const { videoURL, isMuted, toggleMute, isActive } = videoProps;
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [isPaused, setPaused] = useState<{
-    type: boolean;
-    id: number;
-  } | null>(null);
-  useEffect(() => {
-    if (!videoRef.current) return;
-    if (isActive) {
-      videoRef.current.currentTime = 0;
-      videoRef.current.play().catch((error) => {
-        console.error("Autoplay prevented by browser:", error);
-      });
-    } else {
-      videoRef.current.pause();
-    }
-  }, [isActive, videoURL]);
-
-  const togglePlay = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (videoRef.current) {
-      if (videoRef.current.paused) {
-        setPaused({ type: false, id: Date.now() });
-        videoRef.current.play().catch((error) => {
-          console.error("Play failed:", error);
-        });
-      } else {
-        videoRef.current.pause();
-        setPaused({ type: true, id: Date.now() });
-      }
-      setTimeout(() => {
-        setPaused(null);
-      }, 600);
-    }
-  };
-
-  return (
-    <div className="h-full w-full flex justify-center items-center overflow-hidden relative">
-      <video
-        ref={videoRef}
-        src={videoURL}
-        loop
-        muted={isMuted}
-        playsInline
-        className="absolute inset-0 h-full w-full object-cover z-0 rounded-2xl"
-      />
-      <div
-        className="absolute inset-0 z-10 w-full h-full flex justify-center items-center"
-        onClick={togglePlay}
-      >
-        {isPaused && (
-          <img
-            key={isPaused.id}
-            src={isPaused.type ? "/pause.png" : "/play.png"}
-            className="w-[60px] h-[60px] animate-float-up pointer-events-none"
-            alt={isPaused.type ? "Pause" : "Play"}
-          />
-        )}
-      </div>
-      <div className="absolute inset-0 z-20 pointer-events-none">
-        <div className="absolute top-4 left-4 pointer-events-auto">
-          <button
-            className="absolute top-[10px] left-[10px] w-[40px] h-[40px] bg-transparent"
-            onClick={toggleMute}
-          >
-            {isMuted ? (
-              <img src="/mute.png" alt="Muted" className="w-[40px] h-[40px]" />
-            ) : (
-              <img
-                src="/unmute.png"
-                alt="UnMuted"
-                className="w-[40px] h-[40px]"
-              />
-            )}
-          </button>
-        </div>
-        <div className="absolute bottom-8 left-4 pointer-events-auto">
-          <p className="text-white font-bold text-lg drop-shadow-md">
-            @"creator"
-          </p>
-        </div>
-      </div>
-    </div>
-  );
-};
-
-const VideoFeed = ({ videoRes }: { videoRes: VideoResponse }) => {
-  const [videos, setVideos] = useState<VideoRes[]>(videoRes.videos);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [isMuted, setIsMuted] = useState(true);
-  const [page, setPage] = useState(2);
-
-  const fetchingRef = useRef<boolean>(false);
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  const toggleMute = () => {
-    setIsMuted((prev) => !prev);
-  };
-
-  const observerCallback = useCallback(
-    (entries: IntersectionObserverEntry[]) => {
-      entries.forEach((entry) => {
-        if (entry.isIntersecting) {
-          const idx = Number(entry.target.getAttribute("data-index"));
-          setCurrentIndex(idx);
-        }
-      });
-    },
-    [],
-  );
-
-  useEffect(() => {
-    const observer = new IntersectionObserver(observerCallback, {
-      root: containerRef.current,
-      threshold: 0.6,
-    });
-    const items = containerRef.current?.querySelectorAll("[data-index]");
-    items?.forEach((element) => observer.observe(element));
-    return () => observer.disconnect();
-  }, [videos, observerCallback]);
-
-  useEffect(() => {
-    const remaining = videos.length - currentIndex - 1;
-    if (remaining <= 2 && !fetchingRef.current) {
-      fetchingRef.current = true;
-
-      getVideosByQuery("space", page, 5)
-        .then((data) => {
-          if (data && data.videos.length > 0) {
-            setVideos((prev) => {
-              const existingIds = new Set(prev.map((v) => v.id));
-              const newVideos = data.videos.filter(
-                (v) => !existingIds.has(v.id),
-              );
-              return [...prev, ...newVideos];
-            });
-
-            setPage((prevPage) => prevPage + 1);
-          }
-          fetchingRef.current = false;
-        })
-        .catch((err) => {
-          console.error("Fetch error:", err);
-          fetchingRef.current = false;
-        });
-    }
-  }, [currentIndex, videos.length, page]);
-
-  return (
-    <div
-      ref={containerRef}
-      className="h-screen w-full overflow-y-scroll snap-y snap-mandatory scrollbar-hide bg-black text-white"
-    >
-      {videos.map((video, index) => {
-        const isActive = index === currentIndex;
-
-        return (
-          <div
-            key={`${video.id}-${index}`}
-            data-index={index}
-            className="h-screen w-full snap-start snap-always"
-          >
-            <VideoFrame
-              videoProps={{
-                videoURL: video.url,
-                isMuted,
-                toggleMute,
-                isActive,
-              }}
-            />
-          </div>
-        );
-      })}
-    </div>
-  );
-};
-
-export default VideoFeed;
-```
-
-**Note:** The **after** block uses **`getVideosByQuery("space", page, 5)`** so it matches **`page.tsx`** above. If you keep **`"nature"`** in your app, change both files to **`"nature"`**.
-
----
-
-## Workshop — From starter `component/Video.tsx` to completed `VideoFeed`
-
-### What’s wrong in the starter
-
-- **`VideoFrame` is nested inside `VideoFeed`** and reuses **`videoRef` / `togglePlay` / `isPaused` from the parent**, so every card would fight over one ref (only one real `<video>` should exist per card, each with its own ref).
-- **`VideoFeed` never maps `videos`** — there is no vertical list, snap scroll, or `data-index`.
-- **No `IntersectionObserver`** — `currentIndex` never updates from scroll.
-- **No `getVideosByQuery` in the client** — no “load more” when you near the end.
-- **No mute UI** in the starter `VideoFrame` (completed version adds mute/creator overlay).
-- **Unused state** in starter: `isActive` in `VideoFeed` is not wired to anything meaningful.
-
----
-
-### Step 1 — Hoist `VideoFrame` to the top level (same file)
-
-**Remove from `VideoFeed`:** The entire **nested** `const VideoFrame = (...) => { ... };` block that currently sits **inside** `VideoFeed`.
-
-**Remove from `VideoFeed`:** The line **`export default function VideoFeed`** — you will use **`const VideoFeed = ...`** + **`export default VideoFeed`** at the bottom (Step 10).
-
-**Add** directly **below** `export interface VideoProps { ... }` (still above `VideoFeed`):
-
-```tsx
-const VideoFrame = ({ videoProps }: { videoProps: VideoProps }) => {
-  const { videoURL, isMuted, toggleMute, isActive } = videoProps;
-  return (
-    <div className="h-full w-full flex justify-center items-center overflow-hidden relative">
-      {/* Step 2–4: video, tap overlay, mute UI */}
-    </div>
-  );
-};
-```
-
-**Change** `VideoFeed` to a regular const (no `export default` on this line yet):
-
-```tsx
-const VideoFeed = ({ videoRes }: { videoRes: VideoResponse }) => {
-  // Step 5+: only feed logic here
-};
 ```
 
 ---
 
-### Step 2 — `VideoFrame`: own `videoRef`, `isPaused`, `togglePlay`, and `<video>`
+## Step 2 — `VideoFrame`: one root `<div>` + mute / creator overlay (`z-20`)
 
-**Replace** the inside of `VideoFrame` (the placeholder comment) with:
+**Why:** TikTok-style UI needs mute control and a caption area. The completed layout uses a **single** outer wrapper (no `<>...</>` fragment) so overlays stack as siblings: video (`z-0`), tap layer (`z-10`), chrome (`z-20`).
 
-```tsx
-const VideoFrame = ({ videoProps }: { videoProps: VideoProps }) => {
-  const { videoURL, isMuted, toggleMute, isActive } = videoProps;
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const [isPaused, setPaused] = useState<{
-    type: boolean;
-    id: number;
-  } | null>(null);
+**Change in `VideoFrame` `return`:**
 
-  const togglePlay = (e: React.MouseEvent<HTMLDivElement>) => {
-    e.stopPropagation();
-    if (!videoRef.current) return;
-    if (videoRef.current.paused) {
-      setPaused({ type: false, id: Date.now() });
-      videoRef.current.play().catch((err) => {
-        console.error("Play failed:", err);
-      });
-    } else {
-      setPaused({ type: true, id: Date.now() });
-      videoRef.current.pause();
-    }
-    setTimeout(() => setPaused(null), 600);
-  };
-
-  return (
-    <div className="h-full w-full flex justify-center items-center overflow-hidden relative">
-      <video
-        ref={videoRef}
-        src={videoURL}
-        loop
-        muted={isMuted}
-        playsInline
-        className="absolute inset-0 h-full w-full object-cover z-0 rounded-2xl"
-      />
-      <div
-        className="absolute inset-0 z-10 w-full h-full flex justify-center items-center"
-        onClick={togglePlay}
-      >
-        {isPaused && (
-          <img
-            key={isPaused.id}
-            src={isPaused.type ? "/pause.png" : "/play.png"}
-            className="w-[60px] h-[60px] animate-float-up pointer-events-none"
-            alt={isPaused.type ? "Pause" : "Play"}
-          />
-        )}
-      </div>
-    </div>
-  );
-};
-```
-
-**Remove from `VideoFeed`:** `videoRef`, `isPaused`, `togglePlay` (they now live only in `VideoFrame`).
-
----
-
-### Step 3 — `VideoFrame`: `useEffect` for `isActive` (autoplay / pause on scroll)
-
-**Add** inside `VideoFrame`, **after** `useState` for `isPaused` and **before** `togglePlay`:
-
-```tsx
-useEffect(() => {
-  if (!videoRef.current) return;
-  if (isActive) {
-    videoRef.current.currentTime = 0;
-    videoRef.current.play().catch((err) => {
-      console.error("Autoplay prevented by browser:", err);
-    });
-  } else {
-    videoRef.current.pause();
-  }
-}, [isActive, videoURL]);
-```
-
----
-
-### Step 4 — `VideoFrame`: mute + creator overlay (`z-20`)
-
-**Add** inside the outer `VideoFrame` `<div>`, **after** the tap overlay `</div>`, **before** the closing `</div>` of the frame:
+1. Replace the fragment with **one** outer `div` (class order like completed: `h-full w-full flex justify-center items-center overflow-hidden relative`).
+2. After the tap overlay `</div>`, **before** the closing outer `</div>`, paste the **`z-20`** block:
 
 ```tsx
 <div className="absolute inset-0 z-20 pointer-events-none">
@@ -501,19 +68,51 @@ useEffect(() => {
 </div>
 ```
 
+**Assets:** Ensure **`public/mute.png`** and **`public/unmute.png`** exist (and play/pause images if not already).
+
+**Later improvement:** Replace `@"creator"` with **`{video.user.name}`** by passing `creatorName` through `VideoProps` from `video.user.name` in the `map`.
+
 ---
 
-### Step 5 — `VideoFeed`: keep only feed-level state + refs + `toggleMute`
+## Step 3 — `VideoFrame`: match completed `togglePlay` guard (optional but tidy)
 
-**Inside `VideoFeed`, remove** (if still present):
+**Why:** Completed code wraps body in `if (videoRef.current) { ... }` so `setTimeout` only runs when the ref exists.
 
-- `const videoRef = ...`
-- `const [isPaused, ...]`
-- `const [isActive, setIsActive] = ...` (unused)
-- `const togglePlay = ...`
-- any **nested** `VideoFrame` definition
+**Replace** your `togglePlay` with:
 
-**Ensure `VideoFeed` starts like this** (then Steps 7–9 add observer + JSX + pagination):
+```tsx
+const togglePlay = (e: React.MouseEvent<HTMLDivElement>) => {
+  e.stopPropagation();
+  if (videoRef.current) {
+    if (videoRef.current.paused) {
+      setPaused({ type: false, id: Date.now() });
+      videoRef.current.play().catch((error) => {
+        console.error("Play failed:", error);
+      });
+    } else {
+      videoRef.current.pause();
+      setPaused({ type: true, id: Date.now() });
+    }
+    setTimeout(() => {
+      setPaused(null);
+    }, 600);
+  }
+};
+```
+
+---
+
+## Step 4 — `VideoFeed`: remove dead state; add refs + `toggleMute`
+
+**Why:** `isActive` on the feed is unused — **per-item** `isActive` is computed as `index === currentIndex` when you `map`. You need a scroll container ref, a fetch lock ref, and a mute toggler shared by all frames.
+
+**Remove from `VideoFeed`:**
+
+```tsx
+const [isActive, setIsActive] = useState(false);
+```
+
+**Replace** the opening of `VideoFeed` with:
 
 ```tsx
 const VideoFeed = ({ videoRes }: { videoRes: VideoResponse }) => {
@@ -529,27 +128,17 @@ const VideoFeed = ({ videoRes }: { videoRes: VideoResponse }) => {
     setIsMuted((prev) => !prev);
   };
 
-  // Step 7: observer
-  // Step 8: return (...)
-  // Step 9: pagination effect
+  // Steps 5–7 add observer, pagination, and return JSX
 };
 ```
 
 ---
 
-### Step 6 — Import `getVideosByQuery`
+## Step 5 — `VideoFeed`: `IntersectionObserver` + `useCallback`
 
-**Add** at the top of `component/Video.tsx` with the other imports:
+**Why:** When the user scrolls, the browser tells us which `data-index` section is most visible. We set `currentIndex` so only that `VideoFrame` gets `isActive` and autoplays.
 
-```tsx
-import { getVideosByQuery } from "@/lib/getVideos";
-```
-
----
-
-### Step 7 — `VideoFeed`: `IntersectionObserver` + `useCallback`
-
-**Add** inside `VideoFeed` after `toggleMute` (and **before** the pagination effect if you already added it):
+**Add** inside `VideoFeed` after `toggleMute`:
 
 ```tsx
 const observerCallback = useCallback(
@@ -577,9 +166,47 @@ useEffect(() => {
 
 ---
 
-### Step 8 — `VideoFeed`: scroll container + `map` + `VideoFrame` per item
+## Step 6 — `VideoFeed`: pagination near the end of the list
 
-**Add** the `return` for `VideoFeed` (or replace the old return):
+**Why:** Initial data is only page 1 from the server. When the user is close to the last clips, fetch the next Pexels page, **dedupe by `id`**, append, and bump `page` so the next fetch gets new results.
+
+**Add** another `useEffect` in `VideoFeed`:
+
+```tsx
+useEffect(() => {
+  const remaining = videos.length - currentIndex - 1;
+  if (remaining <= 2 && !fetchingRef.current) {
+    fetchingRef.current = true;
+
+    getVideosByQuery("space", page, 5)
+      .then((data) => {
+        if (data && data.videos.length > 0) {
+          setVideos((prev) => {
+            const existingIds = new Set(prev.map((v) => v.id));
+            const newVideos = data.videos.filter((v) => !existingIds.has(v.id));
+            return [...prev, ...newVideos];
+          });
+          setPage((prevPage) => prevPage + 1);
+        }
+        fetchingRef.current = false;
+      })
+      .catch((err) => {
+        console.error("Fetch error:", err);
+        fetchingRef.current = false;
+      });
+  }
+}, [currentIndex, videos.length, page]);
+```
+
+**Note:** If you use **`"nature"`** (or anything else) in **`page.tsx`**, use that **same** string here instead of **`"space"`**.
+
+---
+
+## Step 7 — `VideoFeed`: replace `return null` with snap-scroll + `map`
+
+**Why:** This is the visible feed: full-screen sections, scroll snap, and one `VideoFrame` per video with `isActive` driven by `currentIndex`.
+
+**Replace** `return null;` with:
 
 ```tsx
 return (
@@ -611,85 +238,42 @@ return (
 );
 ```
 
-Use the **same search string** as `page.tsx` in Step 9 (here: `"space"`).
+**Tailwind:** If `scrollbar-hide` is not defined in your setup, remove that class or add the utility in your global CSS.
 
 ---
 
-### Step 9 — `VideoFeed`: load more when near the end
+## Step 8 — `app/page.tsx`: name the import `VideoFeed` (optional cleanup)
 
-**Add** another `useEffect` in `VideoFeed` (after the observer effect is fine):
+**Why:** The default export **is** `VideoFeed`. Naming the import `VideoFrame` works but confuses readers.
 
-```tsx
-useEffect(() => {
-  const remaining = videos.length - currentIndex - 1;
-  if (remaining <= 2 && !fetchingRef.current) {
-    fetchingRef.current = true;
-
-    getVideosByQuery("space", page, 5)
-      .then((data) => {
-        if (data && data.videos.length > 0) {
-          setVideos((prev) => {
-            const existingIds = new Set(prev.map((v) => v.id));
-            const newVideos = data.videos.filter((v) => !existingIds.has(v.id));
-            return [...prev, ...newVideos];
-          });
-          setPage((prevPage) => prevPage + 1);
-        }
-        fetchingRef.current = false;
-      })
-      .catch((err) => {
-        console.error("Fetch error:", err);
-        fetchingRef.current = false;
-      });
-  }
-}, [currentIndex, videos.length, page]);
-```
-
-Change **`"space"`** to match **`page.tsx`** if you use a different query.
-
----
-
-### Step 10 — Default export + `app/page.tsx` import
-
-**At the bottom of `component/Video.tsx`, add:**
+**Change:**
 
 ```tsx
-export default VideoFeed;
-```
-
-**In `app/page.tsx`, change:**
-
-```tsx
-// Before
-import VideoFrame from "@/component/Video";
-// ...
-<VideoFrame videoRes={data} />
-
-// After
 import VideoFeed from "@/component/Video";
 // ...
 <VideoFeed videoRes={data} />
 ```
 
-**Result:** One default export, correct import name, full feed behavior.
-
 ---
 
-## Quick checklist (for slides or handout)
+## Done checklist
 
-| Done? | Item |
+| Step | Done |
 |------|------|
-| ☐ | `VideoFrame` at top level with own `videoRef` / `isPaused` / `togglePlay` |
-| ☐ | Mute + creator (or user name) overlay on `VideoFrame` |
-| ☐ | `VideoFeed` maps `videos` in snap-scroll container |
-| ☐ | `data-index` on each section |
-| ☐ | `IntersectionObserver` updates `currentIndex` |
-| ☐ | `getVideosByQuery` load-more with dedupe + `page` |
-| ☐ | `page.tsx` imports `VideoFeed` and passes `videoRes` |
+| 1 | `getVideosByQuery` imported |
+| 2 | Mute + creator overlay on `VideoFrame` |
+| 3 | (Optional) `togglePlay` guard matches completed |
+| 4 | `VideoFeed`: refs + `toggleMute`, removed unused `isActive` |
+| 5 | `IntersectionObserver` + `useCallback` |
+| 6 | Pagination with dedupe + `page` bump |
+| 7 | Snap-scroll + `videos.map` + `data-index` |
+| 8 | (Optional) `page.tsx` import renamed to `VideoFeed` |
 
 ---
 
-## Note on query string (`"nature"` vs `"space"`)
+## Full completed `component/Video.tsx` (target)
 
-Use the **same search query** in **`page.tsx`** (first fetch) and in **`VideoFeed`** (load more) so pagination feels consistent for demos.
+After all steps, your file should match root **`Video.tsx`**, except use **`"space"`** in **`getVideosByQuery`** if that matches **`page.tsx`**.
+
+You can copy-paste from **`Video.tsx`** and only change the query string if needed.
 
